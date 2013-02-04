@@ -4472,13 +4472,20 @@ wysihtml5.dom.getParentElement = (function() {
   }
   
   function _getParentElementWithNodeName(node, nodeName, levels) {
-    
+    console.info('node !== editor.composer.element')
+    console.info(node !== editor.composer.element)
     while (levels-- && node && node.nodeName !== "BODY" && node !== editor.composer.element) {
+
+      console.info('in loop node !== editor.composer.element')
+      console.info(node !== editor.composer.element)
+      console.info('node');
+      console.info(node);
       if (_isSameNodeName(node.nodeName, nodeName)) {
         return node;
       }
       node = node.parentNode;
     }
+    console.info('_getParentElementWithNodeName returning null')
     return null;
   }
   
