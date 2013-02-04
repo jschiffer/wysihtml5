@@ -60,6 +60,9 @@ JS_FILES = src/wysihtml5.js \
   src/commands/justifyLeft.js \
   src/commands/justifyRight.js \
   src/commands/justifyFull.js \
+  src/commands/letterSpacing.js \
+  src/commands/alignText.js \
+  src/commands/fontFamily.js \
   src/commands/redo.js \
   src/commands/underline.js \
   src/commands/undo.js \

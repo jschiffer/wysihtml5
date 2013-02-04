@@ -40,7 +40,8 @@ wysihtml5.dom.getParentElement = (function() {
   }
   
   function _getParentElementWithNodeName(node, nodeName, levels) {
-    while (levels-- && node && node.nodeName !== "BODY") {
+    
+    while (levels-- && node && node.nodeName !== "BODY" && node !== editor.composer.element) {
       if (_isSameNodeName(node.nodeName, nodeName)) {
         return node;
       }

@@ -71,7 +71,25 @@ var wysihtml5ParserRules = {
         "wysiwyg-text-align-center": 1,
         "wysiwyg-text-align-justify": 1,
         "wysiwyg-text-align-left": 1,
-        "wysiwyg-text-align-right": 1
+        "wysiwyg-text-align-right": 1,
+        "wysiwyg-font-style-italic":1,
+        "wysiwyg-font-weight-bold":1,
+        "wysiwyg-decoration-underline":1
+    },
+    addClass:function(className)
+    {
+        if(className.indexOf('.') != -1 && className.indexOf('.') == 0)
+        {
+            className = className.split('.')[1];
+        }
+        this['classes'][className] = 1;
+    },
+    removeClass:function(className)
+    {
+        if(this['classes'][className])
+        {
+            delete this['classes'][className]
+        }
     },
     /**
      * Tag list
@@ -486,6 +504,22 @@ var wysihtml5ParserRules = {
         "center": {
             "rename_tag": "div",
             "set_class": "wysiwyg-text-align-center"
+        },
+        "i":{
+            "rename_tag":"span",
+            "set_class":"wysiwyg-font-style-italic"
+        },
+        "em":{
+            "rename_tag":"span",
+            "set_class":"wysiwyg-font-style-italic"
+        },
+        "b":{
+            "rename_tag":"span",
+            "set_class":"wysiwyg-font-weight-bold"
+        },
+        "u":{
+            "rename_tag":"span",
+            "set_class":"wysiwyg-decoration-underline"
         },
         "audio": {
             "remove": 1

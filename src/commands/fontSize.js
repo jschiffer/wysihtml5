@@ -4,7 +4,8 @@
  * Instead we set a css class
  */
 (function(wysihtml5) {
-  var REG_EXP = /wysiwyg-font-size-[0-9a-z\-]+/g;
+  var undef,
+      REG_EXP = /wysiwyg-font-size-[0-9][0-9]+/g;
   
   wysihtml5.commands.fontSize = {
     exec: function(composer, command, size) {
@@ -13,6 +14,9 @@
 
     state: function(composer, command, size) {
       return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-font-size-" + size, REG_EXP);
+    },
+    value: function() {
+      return undef;
     }
   };
 })(wysihtml5);

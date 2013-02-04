@@ -116,6 +116,11 @@
       });
       this.iframe  = this.sandbox.getIframe();
       
+      //jbs quick iframe adjust size to config.dimensions.height/width
+      this.iframe.style.width = this.config.dimensions.width+'px';
+      this.iframe.style.height = this.config.dimensions.height+'px';
+      //jbs end sizing update
+
       var textareaElement = this.textarea.element;
       dom.insert(this.iframe).after(textareaElement);
       
@@ -135,6 +140,13 @@
       this.doc                = this.sandbox.getDocument();
       this.element            = this.doc.body;
       this.textarea           = this.parent.textarea;
+
+
+      //jbs reassign editable node from body to tableCell; this blows up block align at the moment.
+      //overwrite element with tableCell created in buildElment;
+      this.element = this._buildElement();//tableCell;
+      //jbs END reassign editable node from body to table-cell  
+
       this.element.innerHTML  = this.textarea.getValue(true);
       
       // Make sure our selection handler is ready
@@ -205,6 +217,25 @@
       
       // Fire global (before-)load event
       this.parent.fire("beforeload").fire("load");
+    },
+
+    _buildElement:function(){
+      var tableDiv = document.createElement('div');
+          tableDiv.setAttribute('id','tableDiv');
+          tableDiv.style.display = 'table';
+          tableDiv.style.width = this.config.dimensions.width+'px';
+          tableDiv.style.height = this.config.dimensions.height+'px';
+      
+      var tableCell = document.createElement('div');
+          tableCell.setAttribute('id','tableCell');
+          tableCell.style.display = 'table-cell';
+          tableCell.style.width = this.config.dimensions.width+'px';
+          tableCell.style.height = this.config.dimensions.height+'px';
+      
+        tableDiv.appendChild(tableCell);
+
+        dom.insert(tableDiv).into(this.sandbox.getDocument().body);
+        return tableCell;
     },
 
     _initAutoLinking: function() {

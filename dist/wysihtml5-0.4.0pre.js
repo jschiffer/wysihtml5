@@ -3485,7 +3485,7 @@ wysihtml5.browser = (function() {
      * Firefox on OSX navigates through history when hitting CMD + Arrow right/left
      */
     hasHistoryIssue: function() {
-      return isGecko;
+      return isGecko && navigator.platform.substr(0, 3) === "Mac";
     },
 
     /**
@@ -3725,6 +3725,18 @@ wysihtml5.browser = (function() {
      */
     hasIframeFocusIssue: function() {
       return isIE;
+    },
+    
+    /**
+     * Chrome + Safari create invalid nested markup after paste
+     * 
+     *  <p>
+     *    foo
+     *    <p>bar</p> <!-- BOO! -->
+     *  </p>
+     */
+    createsNestedInvalidMarkupAfterPaste: function() {
+      return isWebKit;
     }
   };
 })();wysihtml5.lang.array = function(arr) {
@@ -3876,7 +3888,14 @@ wysihtml5.browser = (function() {
   };
 };(function() {
   var WHITE_SPACE_START = /^\s+/,
-      WHITE_SPACE_END   = /\s+$/;
+      WHITE_SPACE_END   = /\s+$/,
+      ENTITY_REG_EXP    = /[&<>"]/g,
+      ENTITY_MAP = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': "&quot;"
+      };
   wysihtml5.lang.string = function(str) {
     str = String(str);
     return {
@@ -3912,6 +3931,15 @@ wysihtml5.browser = (function() {
             return str.split(search).join(replace);
           }
         };
+      },
+      
+      /**
+       * @example
+       *    wysihtml5.lang.string("hello<br>").escapeHTML();
+       *    // => "hello&lt;br&gt;"
+       */
+      escapeHTML: function() {
+        return str.replace(ENTITY_REG_EXP, function(c) { return ENTITY_MAP[c]; });
       }
     };
   };
@@ -4002,11 +4030,12 @@ wysihtml5.browser = (function() {
    */
   function _wrapMatchesInNode(textNode) {
     var parentNode  = textNode.parentNode,
+        nodeValue   = wysihtml5.lang.string(textNode.data).escapeHTML(),
         tempElement = _getTempElement(parentNode.ownerDocument);
     
     // We need to insert an empty/temporary <span /> to fix IE quirks
     // Elsewise IE would strip white space in the beginning
-    tempElement.innerHTML = "<span></span>" + _convertUrlsToLinks(textNode.data);
+    tempElement.innerHTML = "<span></span>" + _convertUrlsToLinks(nodeValue);
     tempElement.removeChild(tempElement.firstChild);
     
     while (tempElement.firstChild) {
@@ -4443,7 +4472,8 @@ wysihtml5.dom.getParentElement = (function() {
   }
   
   function _getParentElementWithNodeName(node, nodeName, levels) {
-    while (levels-- && node && node.nodeName !== "BODY") {
+    
+    while (levels-- && node && node.nodeName !== "BODY" && node !== editor.composer.element) {
       if (_isSameNodeName(node.nodeName, nodeName)) {
         return node;
       }
@@ -4792,9 +4822,9 @@ wysihtml5.dom.parse = (function() {
     }
     
     while (element.firstChild) {
-      firstChild  = element.firstChild;
-      element.removeChild(firstChild);
+      firstChild = element.firstChild;
       newNode = _convert(firstChild, cleanUp);
+      element.removeChild(firstChild);
       if (newNode) {
         fragment.appendChild(newNode);
       }
@@ -4815,6 +4845,7 @@ wysihtml5.dom.parse = (function() {
         oldChildsLength = oldChilds.length,
         method          = NODE_TYPE_MAPPING[oldNodeType],
         i               = 0,
+        fragment,
         newNode,
         newChild;
     
@@ -4833,10 +4864,13 @@ wysihtml5.dom.parse = (function() {
     
     // Cleanup senseless <span> elements
     if (cleanUp &&
-        newNode.childNodes.length <= 1 &&
         newNode.nodeName.toLowerCase() === DEFAULT_NODE_NAME &&
-        !newNode.attributes.length) {
-      return newNode.firstChild;
+        (!newNode.childNodes.length || !newNode.attributes.length)) {
+      fragment = newNode.ownerDocument.createDocumentFragment();
+      while (newNode.firstChild) {
+        fragment.appendChild(newNode.firstChild);
+      }
+      return fragment;
     }
     
     return newNode;
@@ -5054,8 +5088,17 @@ wysihtml5.dom.parse = (function() {
     }
   }
   
+  var INVISIBLE_SPACE_REG_EXP = /\uFEFF/g;
   function _handleText(oldNode) {
-    return oldNode.ownerDocument.createTextNode(oldNode.data);
+    var nextSibling = oldNode.nextSibling;
+    if (nextSibling && nextSibling.nodeType === wysihtml5.TEXT_NODE) {
+      // Concatenate text nodes
+      nextSibling.data = oldNode.data + nextSibling.data;
+    } else {
+      // \uFEFF = wysihtml5.INVISIBLE_SPACE (used as a hack in certain rich text editing situations)
+      var data = oldNode.data.replace(INVISIBLE_SPACE_REG_EXP, "");
+      return oldNode.ownerDocument.createTextNode(data);
+    } 
   }
   
   
@@ -6775,22 +6818,27 @@ wysihtml5.Commands = Base.extend(
     }
   }
 });
-wysihtml5.commands.bold = {
-  exec: function(composer, command) {
-    return wysihtml5.commands.formatInline.exec(composer, command, "b");
-  },
-
-  state: function(composer, command) {
-    // element.ownerDocument.queryCommandState("bold") results:
-    // firefox: only <b>
-    // chrome:  <b>, <strong>, <h1>, <h2>, ...
-    // ie:      <b>, <strong>
-    // opera:   <b>, <strong>
-    return wysihtml5.commands.formatInline.state(composer, command, "b");
-  }
-};
-
+/* 
+utilize css bold so that we can parse all styles out of span tags as opposed to nested tags.
+ */ 
 (function(wysihtml5) {
+  var undef,
+      REG_EXP = /wysiwyg-font-weight-[a-z\-]+/g;
+  
+  wysihtml5.commands.bold = {
+    exec: function(composer, command, weight) {
+      return wysihtml5.commands.formatInline.exec(composer, command, "span", "wysiwyg-font-weight-" + weight, REG_EXP);
+    },
+
+    state: function(composer, command, weight) {
+      return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-font-weight-" + weight, REG_EXP);
+    },
+
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);(function(wysihtml5) {
   var undef,
       NODE_NAME = "A",
       dom       = wysihtml5.dom;
@@ -6897,7 +6945,7 @@ wysihtml5.commands.bold = {
  */
 (function(wysihtml5) {
   var undef,
-      REG_EXP = /wysiwyg-font-size-[0-9a-z\-]+/g;
+      REG_EXP = /wysiwyg-font-size-[0-9][0-9]+/g;
   
   wysihtml5.commands.fontSize = {
     exec: function(composer, command, size) {
@@ -6907,13 +6955,11 @@ wysihtml5.commands.bold = {
     state: function(composer, command, size) {
       return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-font-size-" + size, REG_EXP);
     },
-
     value: function() {
       return undef;
     }
   };
-})(wysihtml5);
-/**
+})(wysihtml5);/**
  * document.execCommand("foreColor") will create either inline styles (firefox, chrome) or use font tags
  * which we don't want
  * Instead we set a css class
@@ -7274,7 +7320,6 @@ wysihtml5.commands.bold = {
       var doc     = composer.doc,
           image   = this.state(composer),
           textNode,
-          i,
           parent;
 
       if (image) {
@@ -7297,11 +7342,8 @@ wysihtml5.commands.bold = {
 
       image = doc.createElement(NODE_NAME);
       
-      for (i in value) {
-        if (i === "className") {
-          i = "class";
-        }
-        image.setAttribute(i, value[i]);
+      for (var i in value) {
+        image.setAttribute(i === "className" ? "class" : i, value[i]);
       }
 
       composer.selection.insertNode(image);
@@ -7472,7 +7514,8 @@ wysihtml5.commands.bold = {
     var selectedNode = composer.selection.getSelectedNode();
     return wysihtml5.dom.getParentElement(selectedNode, { nodeName: "UL" });
   }
-};wysihtml5.commands.italic = {
+};/*
+wysihtml5.commands.italic = {
   exec: function(composer, command) {
     return wysihtml5.commands.formatInline.exec(composer, command, "i");
   },
@@ -7485,7 +7528,30 @@ wysihtml5.commands.bold = {
     // opera:   only <i>
     return wysihtml5.commands.formatInline.state(composer, command, "i");
   }
-};(function(wysihtml5) {
+};
+*/
+
+/* 
+utilize css italic so that we can parse all styles out of span tags as opposed to nested tags.
+ */ 
+(function(wysihtml5) {
+  var undef,
+      REG_EXP = /wysiwyg-font-style-[a-z\-]+/g;
+  
+  wysihtml5.commands.italic = {
+    exec: function(composer, command, italic) {
+      return wysihtml5.commands.formatInline.exec(composer, command, "span", "wysiwyg-font-style-" + italic, REG_EXP);
+    },
+
+    state: function(composer, command, italic) {
+      return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-font-style-" + italic, REG_EXP);
+    },
+
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);(function(wysihtml5) {
   var CLASS_NAME  = "wysiwyg-text-align-center",
       REG_EXP     = /wysiwyg-text-align-[0-9a-z]+/g;
   
@@ -7538,6 +7604,65 @@ wysihtml5.commands.bold = {
     }
   };
 })(wysihtml5);
+/**
+ * create class for span with specific letter-spacing defined in dynamically generated stylesheet.
+ */
+(function(wysihtml5) {
+  var undef,
+      REG_EXP = /wysiwyg-letter-spacing-[0-9]+/g;
+  
+  wysihtml5.commands.letterSpacing = {
+    exec: function(composer, command, spacing) {
+      return wysihtml5.commands.formatInline.exec(composer, command, "span", "wysiwyg-letter-spacing-" + spacing, REG_EXP);
+    },
+
+    state: function(composer, command, spacing) {
+      return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-letter-spacing-" + spacing, REG_EXP);
+    },
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);(function(wysihtml5) {
+  var undef,
+      CLASS_NAME  = "wysiwyg-text-align-",
+      REG_EXP     = /wysiwyg-text-align-[0-9a-z]+/gi;
+  
+  wysihtml5.commands.alignText = {
+    exec: function(composer, command, dir) {
+      return wysihtml5.commands.formatBlock.exec(composer, "formatBlock", null, CLASS_NAME+dir, REG_EXP);
+    },
+
+    state: function(composer, command, dir) {
+      return wysihtml5.commands.formatBlock.state(composer, "formatBlock", null, CLASS_NAME+dir, REG_EXP);
+    },
+
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);/* document.execCommand("fontFamily") will create either inline styles (firefox, chrome) or use font tags
+ * which we don't want
+ * Instead we set a css class
+ */
+(function(wysihtml5) {
+  var undef,
+      REG_EXP = /wysiwyg-font-family-[a-z\-]+/gi;
+  
+  wysihtml5.commands.fontFamily = {
+    exec: function(composer, command, family) {
+      return wysihtml5.commands.formatInline.exec(composer, command, "span", "wysiwyg-font-family-" + family, REG_EXP);
+    },
+
+    state: function(composer, command, family) {
+      return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-font-family-" + family, REG_EXP);
+    },
+
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);
 wysihtml5.commands.redo = {
   exec: function(composer) {
     return composer.undoManager.redo();
@@ -7546,7 +7671,8 @@ wysihtml5.commands.redo = {
   state: function(composer) {
     return false;
   }
-};wysihtml5.commands.underline = {
+};/*
+wysihtml5.commands.underline = {
   exec: function(composer, command) {
     return wysihtml5.commands.formatInline.exec(composer, command, "u");
   },
@@ -7554,7 +7680,29 @@ wysihtml5.commands.redo = {
   state: function(composer, command) {
     return wysihtml5.commands.formatInline.state(composer, command, "u");
   }
-};wysihtml5.commands.undo = {
+};
+*/
+/* 
+utilize css italic so that we can parse all styles out of span tags as opposed to nested tags.
+ */ 
+(function(wysihtml5) {
+  var undef,
+      REG_EXP = /wysiwyg-decoration-[a-z\-]+/g;
+  
+  wysihtml5.commands.underline = {
+    exec: function(composer, command, underline) {
+      return wysihtml5.commands.formatInline.exec(composer, command, "span", "wysiwyg-decoration-" + underline, REG_EXP);
+    },
+
+    state: function(composer, command, underline) {
+      return wysihtml5.commands.formatInline.state(composer, command, "span", "wysiwyg-decoration-" + underline, REG_EXP);
+    },
+
+    value: function() {
+      return undef;
+    }
+  };
+})(wysihtml5);wysihtml5.commands.undo = {
   exec: function(composer) {
     return composer.undoManager.undo();
   },
@@ -7896,11 +8044,6 @@ wysihtml5.views.View = Base.extend(
         value = this.parent.parse(value);
       }
 
-      // Replace all "zero width no breaking space" chars
-      // which are used as hacks to enable some functionalities
-      // Also remove all CARET hacks that somehow got left
-      value = wysihtml5.lang.string(value).replace(wysihtml5.INVISIBLE_SPACE).by("");
-
       return value;
     },
 
@@ -7991,6 +8134,11 @@ wysihtml5.views.View = Base.extend(
       });
       this.iframe  = this.sandbox.getIframe();
       
+      //jbs quick iframe adjust size to config.dimensions.height/width
+      this.iframe.style.width = this.config.dimensions.width+'px';
+      this.iframe.style.height = this.config.dimensions.height+'px';
+      //jbs end sizing update
+
       var textareaElement = this.textarea.element;
       dom.insert(this.iframe).after(textareaElement);
       
@@ -8010,6 +8158,13 @@ wysihtml5.views.View = Base.extend(
       this.doc                = this.sandbox.getDocument();
       this.element            = this.doc.body;
       this.textarea           = this.parent.textarea;
+
+
+      //jbs reassign editable node from body to tableCell; this blows up block align at the moment.
+      //overwrite element with tableCell created in buildElment;
+      this.element = this._buildElement();//tableCell;
+      //jbs END reassign editable node from body to table-cell  
+
       this.element.innerHTML  = this.textarea.getValue(true);
       
       // Make sure our selection handler is ready
@@ -8080,6 +8235,25 @@ wysihtml5.views.View = Base.extend(
       
       // Fire global (before-)load event
       this.parent.fire("beforeload").fire("load");
+    },
+
+    _buildElement:function(){
+      var tableDiv = document.createElement('div');
+          tableDiv.setAttribute('id','tableDiv');
+          tableDiv.style.display = 'table';
+          tableDiv.style.width = this.config.dimensions.width+'px';
+          tableDiv.style.height = this.config.dimensions.height+'px';
+      
+      var tableCell = document.createElement('div');
+          tableCell.setAttribute('id','tableCell');
+          tableCell.style.display = 'table-cell';
+          tableCell.style.width = this.config.dimensions.width+'px';
+          tableCell.style.height = this.config.dimensions.height+'px';
+      
+        tableDiv.appendChild(tableCell);
+
+        dom.insert(tableDiv).into(this.sandbox.getDocument().body);
+        return tableCell;
     },
 
     _initAutoLinking: function() {
@@ -8228,6 +8402,16 @@ wysihtml5.views.View = Base.extend(
           }
         });
       }
+      
+      // Under certain circumstances Chrome + Safari create nested <p> or <hX> tags after paste
+      // Inserting an invisible white space in front of it fixes the issue
+      if (browser.createsNestedInvalidMarkupAfterPaste()) {
+        dom.observe(this.element, "paste", function(event) {
+          var invisibleSpace = that.doc.createTextNode(wysihtml5.INVISIBLE_SPACE);
+          that.selection.insertNode(invisibleSpace);
+        });
+      }
+
       
       dom.observe(this.doc, "keydown", function(event) {
         var keyCode = event.keyCode;
@@ -8896,6 +9080,7 @@ wysihtml5.views.Textarea = wysihtml5.views.View.extend(
           callbackWrapper(event);
         }
         if (keyCode === wysihtml5.ESCAPE_KEY) {
+          that.fire("cancel");
           that.hide();
         }
       });
@@ -9263,10 +9448,14 @@ wysihtml5.views.Textarea = wysihtml5.views.View.extend(
       for (; i<length; i++) {
         // 'javascript:;' and unselectable=on Needed for IE, but done in all browsers to make sure that all get the same css applied
         // (you know, a:link { ... } doesn't match anchors with missing href attribute)
-        dom.setAttributes({
-          href:         "javascript:;",
-          unselectable: "on"
-        }).on(links[i]);
+        if (links[i].nodeName === "A") {
+          dom.setAttributes({
+            href:         "javascript:;",
+            unselectable: "on"
+          }).on(links[i]);
+        } else {
+          dom.setAttributes({ unselectable: "on" }).on(links[i]);
+        }
       }
 
       // Needed for opera and chrome
@@ -9459,7 +9648,9 @@ wysihtml5.views.Textarea = wysihtml5.views.View.extend(
     // Placeholder text to use, defaults to the placeholder attribute on the textarea element
     placeholderText:      undef,
     // Whether the rich text editor should be rendered on touch devices (wysihtml5 >= 0.3.0 comes with basic support for iOS 5)
-    supportTouchDevices:  true
+    supportTouchDevices:  true,
+    // Whether senseless <span> elements (empty or without attributes) should be removed/replaced with their content
+    cleanUp:              true
   };
   
   wysihtml5.Editor = wysihtml5.lang.Dispatcher.extend(
@@ -9554,7 +9745,7 @@ wysihtml5.views.Textarea = wysihtml5.views.View.extend(
     },
     
     parse: function(htmlOrElement) {
-      var returnValue = this.config.parser(htmlOrElement, this.config.parserRules, this.composer.sandbox.getDocument(), true);
+      var returnValue = this.config.parser(htmlOrElement, this.config.parserRules, this.composer.sandbox.getDocument(), this.config.cleanUp);
       if (typeof(htmlOrElement) === "object") {
         wysihtml5.quirks.redraw(htmlOrElement);
       }
